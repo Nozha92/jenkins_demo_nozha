@@ -1,0 +1,63 @@
+pipeline {
+    agent any
+
+    stages {
+
+        stage('Build') {
+            steps {
+                echo '🧱 Étape Build OK'
+            }
+        }
+
+        stage('Clone GitHub') {
+            steps {
+                echo '📥 Clone du dépôt GitHub'
+                git url: 'https://github.com/Nozha92/jenkins_demo_nozha.git',
+                    branch: 'main'
+            }
+        }
+
+        stage('Tests Python') {
+            steps {
+                echo '🐍 Exécution du script Python'
+                sh 'python3 --version'
+                sh 'python3 script.py'
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                echo '🐳 Build de l’image Docker'
+                sh 'docker --version'
+                sh 'docker build -t jenkins_demo_nozha:latest .'
+            }
+        }
+
+        stage('Docker Run') {
+            steps {
+                echo '🚀 Lancement du conteneur Docker'
+                sh 'docker run --rm jenkins_demo_nozha:latest'
+            }
+        }
+
+        stage('Archive artefacts') {
+            steps {
+                echo '📦 Archivage des artefacts (si besoin)'
+                // Exemple si tu crées un fichier result_github.txt
+                // archiveArtifacts artifacts: 'result_github.txt', fingerprint: true
+            }
+        }
+    }
+
+    post {
+        always {
+            echo '📌 Pipeline exécuté (succès ou échec)'
+        }
+        success {
+            echo '✅ Pipeline terminée avec SUCCESS'
+        }
+        failure {
+            echo '❌ Pipeline en erreur'
+        }
+    }
+}
