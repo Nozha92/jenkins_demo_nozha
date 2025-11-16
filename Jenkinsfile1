@@ -1,156 +1,117 @@
+
 pipeline {
     agent any
 
-    environment {
-        // 🔐 IDs des credentials Jenkins (déjà créés)
-        DOCKERHUB_CREDS = 'dockerhub-creds'
-        GITHUB_CREDS    = 'github-creds'
+    options {
+        skipDefaultCheckout()
+        timestamps()
+    }
 
-        // 🌐 Git
+    environment {
+        // Repo Git
         GIT_REPO_URL = 'https://github.com/Nozha92/jenkins_demo_nozha.git'
         GIT_BRANCH   = 'main'
 
-        // 🐳 Docker / Docker Hub
-        DOCKERHUB_USER = 'nozha92'
-        IMAGE_NAME     = 'nozha92/jenkins-demo-nozha'
-        IMAGE_LATEST   = 'nozha92/jenkins-demo-nozha:latest'
+        // Docker / Docker Hub
+        DOCKER_IMAGE     = 'nozha92/jenkins-demo-nozha'
+        DOCKER_TAG       = 'latest'
+        DOCKERHUB_CREDS  = 'dockerhub-creds'   // ID des credentials Docker Hub dans Jenkins
 
-        // 🚀 Déploiement
-        CONTAINER_NAME = 'jenkins_demo_nozha_app'
-        APP_PORT       = '5000'   // port exposé sur la machine Jenkins
+        // Déploiement local
+        APP_NAME        = 'jenkins_demo_nozha_app'
+        HOST_PORT       = '5002'  // port sur ton Mac
+        CONTAINER_PORT  = '5000'  // port dans le conteneur Flask
     }
 
     stages {
 
+        stage('Checkout SCM') {
+            steps {
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "*/${GIT_BRANCH}"]],
+                    userRemoteConfigs: [[url: "${GIT_REPO_URL}"]]
+                ])
+            }
+        }
+
         stage('Build') {
             steps {
-                echo "🏗️ Démarrage du pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER}"
+                echo '🧱 Étape Build (rien à compiler pour l’instant)'
             }
         }
 
-        stage('Clone GitHub (CLI)') {
-            steps {
-                withCredentials([usernamePassword(
-                        credentialsId: "${GITHUB_CREDS}",
-                        usernameVariable: 'GIT_USER',
-                        passwordVariable: 'GIT_TOKEN'
-                )]) {
-                    sh '''
-                        rm -rf repo_tmp
-                        mkdir repo_tmp
-                        cd repo_tmp
-
-                        echo "📥 Clonage du dépôt GitHub"
-                        git clone --branch "$GIT_BRANCH" "https://${GIT_USER}:${GIT_TOKEN}@github.com/Nozha92/jenkins_demo_nozha.git" .
-
-                        echo "📁 Contenu du repo :"
-                        ls -al
-                    '''
-                }
-            }
-        }
-
-        stage('Tests Python') {
+        stage('Tests') {
             steps {
                 sh '''
-                    cd repo_tmp
-                    echo "▶️ Exécution du script Python"
-                    python3 script.py
+                  echo "▶️ Lancement des tests Python"
+                  python3 script.py
                 '''
             }
         }
 
         stage('Docker Build & Push') {
             steps {
-                withCredentials([usernamePassword(
+                echo '🐳 Build & push de l’image Docker'
+                sh '''
+                  docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
+                '''
+                withCredentials([
+                    usernamePassword(
                         credentialsId: "${DOCKERHUB_CREDS}",
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
-                )]) {
+                        usernameVariable: 'DOCKERHUB_USER',
+                        passwordVariable: 'DOCKERHUB_PWD'
+                    )
+                ]) {
                     sh '''
-                        cd repo_tmp
+                      echo "🔐 Login Docker Hub"
+                      echo "${DOCKERHUB_PWD}" | docker login -u "${DOCKERHUB_USER}" --password-stdin
 
-                        echo "🐳 Connexion à Docker Hub"
-                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                      echo "⬆️ Push de l’image Docker"
+                      docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
 
-                        IMAGE_ID="${IMAGE_NAME}:build-${BUILD_NUMBER}"
-
-                        echo "🏗️ Build de l'image Docker $IMAGE_ID"
-                        docker build -t "$IMAGE_ID" .
-
-                        echo "🏷️ Tag latest : ${IMAGE_LATEST}"
-                        docker tag "$IMAGE_ID" "${IMAGE_LATEST}"
-
-                        echo "📤 Push des images vers Docker Hub"
-                        docker push "$IMAGE_ID"
-                        docker push "${IMAGE_LATEST}"
-
-                        echo "🔓 Déconnexion de Docker Hub"
-                        docker logout || true
+                      docker logout
                     '''
                 }
             }
         }
 
-        // 💥 NOUVEAU : déploiement automatique
-       stage('Deploy') {
-    steps {
-        sh '''
-          # On arrête le script si une commande échoue
-          set -eux
-
-          APP_NAME=jenkins_demo_nozha_app
-          IMAGE_NAME=nozha92/jenkins_demo_nozha:latest
-          HOST_PORT=5002          # port sur ton Mac
-          CONTAINER_PORT=5000     # port dans le conteneur
-
-          echo "🔎 Recherche d'un conteneur existant ${APP_NAME}…"
-          EXISTING_ID=$(docker ps -aq -f name="^${APP_NAME}$" || true)
-
-          if [ -n "$EXISTING_ID" ]; then
-            echo "🛑 Conteneur existant trouvé : $EXISTING_ID → stop & rm"
-            docker stop "$EXISTING_ID" || true
-            docker rm "$EXISTING_ID"   || true
-          else
-            echo "✅ Aucun conteneur existant ${APP_NAME}"
-          fi
-
-          echo "⬇️ Pull de la dernière image ${IMAGE_NAME}"
-          docker pull "$IMAGE_NAME"
-
-          echo "🚀 Lancement du nouveau conteneur sur le port ${HOST_PORT}"
-          docker run -d --name "$APP_NAME" -p ${HOST_PORT}:${CONTAINER_PORT} "$IMAGE_NAME"
-
-          echo "✅ Deployment DONE → ouvre http://localhost:${HOST_PORT}"
-        '''
-    }
-}
-
-        stage('Archive artefacts') {
+        stage('Deploy local (Docker)') {
             steps {
-                // adapte le chemin si besoin
-                archiveArtifacts artifacts: 'repo_tmp/result_github.txt',
-                                  fingerprint: true,
-                                  allowEmptyArchive: true
+                echo '🚀 Déploiement local de l’application'
+                sh '''
+                  set -e
+
+                  IMAGE="${DOCKER_IMAGE}:${DOCKER_TAG}"
+
+                  echo "🛑 Stop & remove éventuel conteneur ${APP_NAME}"
+                  if docker ps -a --format '{{.Names}}' | grep -q "^${APP_NAME}$"; then
+                    docker stop ${APP_NAME} || true
+                    docker rm ${APP_NAME} || true
+                  fi
+
+                  echo "📥 Pull de l’image ${IMAGE}"
+                  docker pull "${IMAGE}"
+
+                  echo "🚀 Lancement du conteneur sur ${HOST_PORT} -> ${CONTAINER_PORT}"
+                  docker run -d --name ${APP_NAME} -p ${HOST_PORT}:${CONTAINER_PORT} "${IMAGE}"
+
+                  echo "✅ Conteneur démarré :"
+                  docker ps | grep ${APP_NAME} || (echo "Conteneur non démarré" && exit 1)
+                '''
             }
         }
     }
 
     post {
-        always {
-            echo "✅ Pipeline terminé (succès ou échec)"
-        }
         success {
-            echo "🎉 Pipeline terminée avec SUCCESS"
+            echo '✅ Pipeline terminé avec SUCCESS'
         }
         failure {
-            echo "❌ Pipeline en erreur"
+            echo '❌ Pipeline en échec – vérifier les logs'
         }
-        cleanup {
-            sh '''
-                echo "🧹 Nettoyage du workspace Jenkins (repo_tmp)"
-                rm -rf repo_tmp || true
-            '''
+        always {
+            echo 'ℹ️ Fin d’exécution du pipeline'
         }
     }
 }
