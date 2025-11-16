@@ -1,50 +1,85 @@
 pipeline {
     agent any
 
+    environment {
+        GIT_URL            = 'https://github.com/Nozha92/jenkins_demo_nozha.git'
+        GIT_BRANCH         = 'main'
+
+        DOCKER_IMAGE       = 'nozha92/jenkins-demo-nozha:latest'
+        DOCKER_CREDENTIALS = 'dockerhub-creds'   // id Jenkins
+        GIT_CREDENTIALS    = 'github-creds'      // id Jenkins
+    }
+
     stages {
 
         stage('Build') {
             steps {
-                echo '🧱 Étape Build OK'
+                echo 'Étape Build OK ✅'
             }
         }
 
-        stage('Clone GitHub') {
+        stage('Clone GitHub (CLI)') {
             steps {
-                echo '📥 Clone du dépôt GitHub'
-                git url: 'https://github.com/Nozha92/jenkins_demo_nozha.git',
-                    branch: 'main'
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: GIT_CREDENTIALS,
+                        usernameVariable: 'GIT_USER',
+                        passwordVariable: 'GIT_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set -eux
+
+                        # On nettoie un ancien clone éventuel
+                        rm -rf repo_tmp
+
+                        echo "📥 Clonage du dépôt GitHub"
+                        git clone --branch "$GIT_BRANCH" \
+                          "https://$GIT_USER:$GIT_TOKEN@github.com/Nozha92/jenkins_demo_nozha.git" \
+                          repo_tmp
+
+                        echo "📂 Contenu cloné :"
+                        ls -al repo_tmp
+                    '''
+                }
             }
         }
 
         stage('Tests Python') {
             steps {
-                echo '🐍 Exécution du script Python'
-                sh 'python3 --version'
-                sh 'python3 script.py'
+                dir('repo_tmp') {
+                    echo '▶️ Lancement du script Python'
+                    sh 'python3 script.py'
+                }
             }
         }
 
-        stage('Docker Build') {
+        stage('Docker Build & Run & Push') {
             steps {
-                echo '🐳 Build de l’image Docker'
-                sh 'docker --version'
-                sh 'docker build -t jenkins_demo_nozha:latest .'
-            }
-        }
+                dir('repo_tmp') {
+                    script {
+                        docker.withRegistry('https://registry.hub.docker.com', DOCKER_CREDENTIALS) {
 
-        stage('Docker Run') {
-            steps {
-                echo '🚀 Lancement du conteneur Docker'
-                sh 'docker run --rm jenkins_demo_nozha:latest'
+                            echo '🐳 Build de l’image Docker'
+                            def img = docker.build(DOCKER_IMAGE)
+
+                            echo '⬆️ Push de l’image sur Docker Hub'
+                            img.push()
+
+                            echo '▶️ Lancement du conteneur pour test'
+                            sh "docker run --rm ${DOCKER_IMAGE}"
+                        }
+                    }
+                }
             }
         }
 
         stage('Archive artefacts') {
             steps {
-                echo '📦 Archivage des artefacts (si besoin)'
-                // Exemple si tu crées un fichier result_github.txt
-                // archiveArtifacts artifacts: 'result_github.txt', fingerprint: true
+                dir('repo_tmp') {
+                    echo '📦 Archivage des artefacts (si présents)'
+                    archiveArtifacts artifacts: 'result_github.txt', fingerprint: true, onlyIfSuccessful: false
+                }
             }
         }
     }
@@ -52,12 +87,14 @@ pipeline {
     post {
         always {
             echo '📌 Pipeline exécuté (succès ou échec)'
+            cleanWs()
         }
         success {
-            echo '✅ Pipeline terminée avec SUCCESS'
+            echo '✅ Pipeline terminé avec SUCCESS'
         }
         failure {
             echo '❌ Pipeline en erreur'
         }
     }
 }
+       
