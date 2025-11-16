@@ -1,15 +1,16 @@
-# Image de base Python
-FROM python:3.10-slim
+FROM python:3.11-slim
 
-# Crée un dossier pour l'app
 WORKDIR /app
 
-# Copie le script Python dans l'image
-COPY script.py /app/script.py
+# Installer les dépendances Python
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# (optionnel) Installer des dépendances si tu as un requirements.txt
-# COPY requirements.txt /app/requirements.txt
-# RUN pip install -r requirements.txt
+# Copier le code de l'application
+COPY app.py .
 
-# Commande par défaut : exécuter le script
-CMD ["python", "script.py"]
+# Le conteneur écoutera sur le port 5000
+EXPOSE 5000
+
+# Lancer l'application Flask
+CMD ["python", "app.py"]
