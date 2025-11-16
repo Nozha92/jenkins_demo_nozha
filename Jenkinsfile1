@@ -1,85 +1,111 @@
-pipeline {
+
+    pipeline {
     agent any
 
     environment {
-        GIT_URL            = 'https://github.com/Nozha92/jenkins_demo_nozha.git'
-        GIT_BRANCH         = 'main'
+        // 🎯 Git
+        GIT_REPO   = 'https://github.com/Nozha92/jenkins_demo_nozha.git'
+        GIT_BRANCH = 'main'
 
-        DOCKER_IMAGE       = 'nozha92/jenkins-demo-nozha:latest'
-        DOCKER_CREDENTIALS = 'dockerhub-creds'   // id Jenkins
-        GIT_CREDENTIALS    = 'github-creds'      // id Jenkins
+        // 🐳 Docker Hub
+        DOCKER_REPO = 'nozha92/jenkins-demo-nozha'
+        IMAGE_TAG   = "build-${env.BUILD_NUMBER}"
+        IMAGE_FULL  = "${DOCKER_REPO}:${IMAGE_TAG}"
+        IMAGE_LATEST = "${DOCKER_REPO}:latest"
+
+        // 🚀 Déploiement
+        CONTAINER_NAME = 'jenkins_demo_nozha_app'
+        APP_PORT       = '5000'   // port sur ta machine
     }
 
     stages {
 
         stage('Build') {
             steps {
-                echo 'Étape Build OK ✅'
+                echo '🔧 Étape Build OK'
             }
         }
 
         stage('Clone GitHub (CLI)') {
             steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: GIT_CREDENTIALS,
-                        usernameVariable: 'GIT_USER',
-                        passwordVariable: 'GIT_TOKEN'
-                    )
-                ]) {
-                    sh '''
-                        set -eux
-
-                        # On nettoie un ancien clone éventuel
-                        rm -rf repo_tmp
-
-                        echo "📥 Clonage du dépôt GitHub"
-                        git clone --branch "$GIT_BRANCH" \
-                          "https://$GIT_USER:$GIT_TOKEN@github.com/Nozha92/jenkins_demo_nozha.git" \
-                          repo_tmp
-
-                        echo "📂 Contenu cloné :"
-                        ls -al repo_tmp
-                    '''
-                }
+                echo '📥 Clonage du dépôt GitHub (CLI)'
+                sh '''
+                    set -eux
+                    rm -rf repo_tmp
+                    git clone --branch "${GIT_BRANCH}" "${GIT_REPO}" repo_tmp
+                    cd repo_tmp
+                    echo "📁 Contenu du repo :"
+                    ls -al
+                '''
             }
         }
 
         stage('Tests Python') {
             steps {
-                dir('repo_tmp') {
-                    echo '▶️ Lancement du script Python'
-                    sh 'python3 script.py'
-                }
+                echo '🧪 Lancement des tests Python'
+                sh '''
+                    set -eux
+                    cd repo_tmp
+                    python3 script.py
+                '''
             }
         }
 
-        stage('Docker Build & Run & Push') {
+        stage('Docker Build & Push') {
             steps {
-                dir('repo_tmp') {
-                    script {
-                        docker.withRegistry('https://registry.hub.docker.com', DOCKER_CREDENTIALS) {
+                echo '🐳 Build & push Docker'
+                sh '''
+                    set -eux
+                    cd repo_tmp
 
-                            echo '🐳 Build de l’image Docker'
-                            def img = docker.build(DOCKER_IMAGE)
+                    echo "🔨 Build de l'image Docker ${IMAGE_FULL}"
+                    docker build -t "${IMAGE_FULL}" .
 
-                            echo '⬆️ Push de l’image sur Docker Hub'
-                            img.push()
+                    echo "🏷️ Tag en latest : ${IMAGE_LATEST}"
+                    docker tag "${IMAGE_FULL}" "${IMAGE_LATEST}"
 
-                            echo '▶️ Lancement du conteneur pour test'
-                            sh "docker run --rm ${DOCKER_IMAGE}"
-                        }
-                    }
-                }
+                    echo "📤 Push des images vers Docker Hub"
+                    docker push "${IMAGE_FULL}"
+                    docker push "${IMAGE_LATEST}"
+                '''
+            }
+        }
+
+        // ⭐⭐ NOUVELLE PARTIE : DÉPLOIEMENT AUTOMATIQUE ⭐⭐
+        stage('Deploy') {
+            steps {
+                echo "🚀 Déploiement du conteneur ${CONTAINER_NAME}"
+                sh '''
+                    set -eux
+
+                    echo "📥 Pull de la dernière image"
+                    docker pull "${IMAGE_LATEST}"
+
+                    echo "🛑 Stop ancien conteneur si présent"
+                    if [ "$(docker ps -q -f name=${CONTAINER_NAME})" ]; then
+                      docker stop "${CONTAINER_NAME}"
+                    fi
+
+                    echo "🧹 Suppression ancien conteneur (même nom) si présent"
+                    if [ "$(docker ps -aq -f name=${CONTAINER_NAME})" ]; then
+                      docker rm "${CONTAINER_NAME}"
+                    fi
+
+                    echo "▶️ Lancement du nouveau conteneur"
+                    docker run -d \
+                      --name "${CONTAINER_NAME}" \
+                      -p ${APP_PORT}:5000 \
+                      "${IMAGE_LATEST}"
+
+                    echo "✅ Déploiement terminé"
+                '''
             }
         }
 
         stage('Archive artefacts') {
             steps {
-                dir('repo_tmp') {
-                    echo '📦 Archivage des artefacts (si présents)'
-                    archiveArtifacts artifacts: 'result_github.txt', fingerprint: true, onlyIfSuccessful: false
-                }
+                echo '📦 Archivage des artefacts (ex: result_github.txt si besoin)'
+                // archiveArtifacts artifacts: 'repo_tmp/result_github.txt', fingerprint: true, onlyIfSuccessful: true
             }
         }
     }
@@ -87,14 +113,14 @@ pipeline {
     post {
         always {
             echo '📌 Pipeline exécuté (succès ou échec)'
+            // Nettoyage du workspace Jenkins
             cleanWs()
         }
         success {
-            echo '✅ Pipeline terminé avec SUCCESS'
+            echo '💚 Pipeline terminé avec SUCCESS'
         }
         failure {
-            echo '❌ Pipeline en erreur'
+            echo '💥 Pipeline en erreur'
         }
     }
-}
-       
+}   
