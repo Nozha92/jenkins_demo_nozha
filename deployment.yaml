@@ -1,0 +1,27 @@
+kapiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mon-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: monsite
+  template:
+    metadata:
+      labels:
+        app: monsite
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: html-volume
+              mountPath: /usr/share/nginx/html
+              readOnly: true
+      volumes:
+        - name: html-volume
+          configMap:
+            name: mon-site-html
